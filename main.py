@@ -441,11 +441,11 @@ if uploaded_file:
         st.rerun()  # Refresh the page to show the new buttons
 
 # Check if MCQs exist (either in session state or file) and show download options
-if st.session_state.mcqs_generated or os.path.exists(final_mcqs_path):
+if st.session_state.mcqs_generated:
     st.subheader("Download Options")
     
     # Load MCQs if not in session state
-    if not st.session_state.mcqs_generated and os.path.exists(final_mcqs_path):
+    if not st.session_state.mcqs_generated:
         try:
             with open(final_mcqs_path, 'r', encoding='utf-8') as f:
                 st.session_state.mcqs_data = json.load(f)
