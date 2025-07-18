@@ -9,6 +9,75 @@ from io import BytesIO
 from dotenv import load_dotenv
 import random
 load_dotenv()
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import matplotlib.pyplot as plt
+import io
+
+def latex_to_png(latex_str, dpi=300):
+    # Remove $$ from start and end if present
+    latex_str = latex_str.strip('$')
+    
+    plt.figure(figsize=(10, 0.5))
+    plt.axis('off')
+    plt.text(0.5, 0.5, latex_str, size=12, ha='center', va='center')
+    
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf, format='png', dpi=dpi, bbox_inches='tight', transparent=True)
+    plt.close()
+    
+    img_buf.seek(0)
+    return img_buf
+
+def generate_pdf(mcqs, output_path):
+    doc = SimpleDocTemplate(output_path, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Custom style for questions
+    question_style = ParagraphStyle(
+        'QuestionStyle',
+        parent=styles['Normal'],
+        fontSize=12,
+        spaceAfter=20
+    )
+    
+    # Custom style for options
+    option_style = ParagraphStyle(
+        'OptionStyle',
+        parent=styles['Normal'],
+        fontSize=10,
+        leftIndent=20,
+        spaceAfter=10
+    )
+
+    for i, mcq in enumerate(mcqs, 1):
+        # Question
+        question_latex = mcq['question']
+        question_img = latex_to_png(question_latex)
+        img = Image(question_img, width=400, height=30)
+        story.append(img)
+        story.append(Spacer(1, 12))
+
+        # Options
+        options = mcq['options']
+        labels = ['A', 'B', 'C', 'D']
+        for j, (label, option) in enumerate(zip(labels, options)):
+            option_latex = option
+            option_img = latex_to_png(option_latex)
+            opt_img = Image(option_img, width=200, height=20)
+            story.append(Paragraph(f"{label})", option_style))
+            story.append(opt_img)
+            story.append(Spacer(1, 10))
+
+        story.append(Spacer(1, 20))
+
+    doc.build(story)
+
 
 
 # Utility: extract and clean MCQs from Claude's output (no KaTeX conversion)
@@ -183,6 +252,27 @@ if uploaded_file:
         json.dump(all_mcqs[:total_mcqs], f, ensure_ascii=False, indent=2)
 
     st.subheader("Generated MCQs")
+
+    if st.button("Generate PDF"):
+    try:
+        pdf_path = "mcqs.pdf"
+        with open(final_mcqs_path, 'r') as f:
+            mcqs = json.load(f)
+        
+        generate_pdf(mcqs, pdf_path)
+        
+        # Create download button for PDF
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+            st.download_button(
+                label="Download MCQs PDF",
+                data=pdf_bytes,
+                file_name="mcqs.pdf",
+                mime="application/pdf"
+            )
+        st.success("PDF generated successfully!")
+    except Exception as e:
+        st.error(f"Error generating PDF: {e}")
 
     # Download button for final_mcqs.json
     with open(final_mcqs_path, "r", encoding="utf-8") as f:
