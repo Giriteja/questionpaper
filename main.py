@@ -663,7 +663,7 @@ if st.session_state.mcqs_generated:
     st.subheader("👀 Preview Generated MCQs")
     if st.session_state.mcqs_data:
         # Show first 3 MCQs as preview
-        for i, mcq in enumerate(st.session_state.mcqs_data[:3], 1):
+        for i, mcq in enumerate(st.session_state.mcqs_data, 1):
             difficulty_emoji = {"Easy": "💚", "Medium": "🧡", "Hard": "❤️"}
             mcq_difficulty = mcq.get('difficulty', 'Unknown')
             difficulty_display = f"{difficulty_emoji.get(mcq_difficulty, '⚪')} {mcq_difficulty}"
