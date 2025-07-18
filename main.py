@@ -27,6 +27,48 @@ from PIL import Image as PILImage
 if 'mcqs_generated' not in st.session_state:
     st.session_state.mcqs_generated = False  # or whatever default value you need
 
+def generate_simple_pdf(mcqs, output_path):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+
+    try:
+        doc = SimpleDocTemplate(output_path, pagesize=letter,
+                                topMargin=1*inch, bottomMargin=1*inch,
+                                leftMargin=1*inch, rightMargin=1*inch)
+
+        styles = getSampleStyleSheet()
+        story = []
+
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16,
+                                     alignment=1, spaceAfter=20, textColor=colors.darkblue)
+        question_style = ParagraphStyle('QuestionStyle', parent=styles['Normal'], fontSize=11, spaceAfter=10)
+        option_style = ParagraphStyle('OptionStyle', parent=styles['Normal'], leftIndent=20, spaceAfter=5)
+        answer_style = ParagraphStyle('AnswerStyle', parent=styles['Normal'], textColor=colors.darkgreen, spaceAfter=20)
+
+        story.append(Paragraph("JEE MCQs (Text Format)", title_style))
+
+        for i, mcq in enumerate(mcqs, 1):
+            question = mcq.get("question", "No Question")
+            options = mcq.get("options", [])
+            answer = mcq.get("answer", "N/A")
+
+            story.append(Paragraph(f"Q{i}. {question}", question_style))
+            for j, opt in enumerate(options):
+                story.append(Paragraph(f"{chr(65 + j)}) {opt}", option_style))
+            story.append(Paragraph(f"Answer: {answer}", answer_style))
+
+            if i % 4 == 0:
+                story.append(PageBreak())
+
+        doc.build(story)
+        return True
+    except Exception as e:
+        print(f"Error generating simple PDF: {e}")
+        return False
+
 def clean_latex(latex_str):
     """Clean and prepare LaTeX string for rendering"""
     if not latex_str:
@@ -441,47 +483,31 @@ if st.session_state.mcqs_generated:
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🔄 Generate PDF with Rendered Math", help="Click to generate PDF with mathematical symbols"):
+        if st.button("📝 Generate Simple Text PDF", help="Click to download plain MCQ PDF as text"):
             if not st.session_state.mcqs_data:
                 st.error("No MCQs found. Please generate MCQs first.")
             else:
                 try:
-                    pdf_path = "mcqs_with_math.pdf"
-                    
-                    # Show debug info
-                    st.info(f"📝 Processing {len(st.session_state.mcqs_data)} MCQs...")
-                    
-                    # Debug: Show first MCQ
-                    if st.session_state.mcqs_data:
-                        with st.expander("🔍 Debug - First MCQ"):
-                            st.json(st.session_state.mcqs_data[0])
-                    
-                    with st.spinner("Generating PDF with mathematical rendering..."):
-                        success = generate_pdf(st.session_state.mcqs_data, pdf_path)
-                    
-                    if success and os.path.exists(pdf_path):
-                        st.success("✅ PDF generated successfully!")
-                        
-                        # Show file size
-                        file_size = os.path.getsize(pdf_path)
-                        st.info(f"📄 PDF size: {file_size / 1024:.1f} KB")
-                        
-                        # Create download button for PDF
-                        with open(pdf_path, "rb") as f:
-                            pdf_bytes = f.read()
+                    pdf_text_path = "jee_mcqs_text.pdf"
+                    with st.spinner("Creating clean text-based PDF..."):
+                        success = generate_simple_pdf(st.session_state.mcqs_data, pdf_text_path)
+    
+                    if success and os.path.exists(pdf_text_path):
+                        st.success("✅ Text-only MCQ PDF generated!")
+                        with open(pdf_text_path, "rb") as f:
                             st.download_button(
-                                label="📄 Download MCQs PDF",
-                                data=pdf_bytes,
-                                file_name="jee_mcqs_with_math.pdf",
+                                label="📄 Download MCQs PDF (Text Only)",
+                                data=f.read(),
+                                file_name="jee_mcqs_text.pdf",
                                 mime="application/pdf",
-                                key="download_pdf"
+                                key="download_text_pdf"
                             )
                     else:
-                        st.error("❌ Error generating PDF. Check the logs above.")
-                        
+                        st.error("Failed to generate text-only MCQ PDF.")
+    
                 except Exception as e:
-                    st.error(f"❌ Error generating PDF: {str(e)}")
-                    st.exception(e)  # Show full traceback for debugging
+                    st.error(f"❌ Error generating text PDF: {str(e)}")
+                    st.exception(e)
 
     with col2:
         # Download button for JSON
