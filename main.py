@@ -1,537 +1,246 @@
-import re
 import streamlit as st
-import os
-import requests
+from typing import Dict, Any
 import json
-import base64
-import fitz  # PyMuPDF
-from io import BytesIO
-from dotenv import load_dotenv
-import random
-load_dotenv()
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.units import inch
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
-import io
-import numpy as np
-from PIL import Image as PILImage
+from datetime import datetime
+import pytz
+from pytz import timezone
+from anthropic import Anthropic
+import pdfplumber
 
-# Initialize the session state variable if it doesn't exist
-if 'mcqs_generated' not in st.session_state:
-    st.session_state.mcqs_generated = False  # or whatever default value you need
+# Streamlit page configuration
+st.set_page_config(page_title="Document Q&A with LaTeX", layout="wide", initial_sidebar_state="auto")
 
-def generate_simple_pdf(mcqs, output_path):
-    from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib import colors
-    from reportlab.lib.units import inch
+# Initialize Claude client
+claude_client = Anthropic(api_key= os.getenv("claude_api"))
 
+# UI elements
+st.title("Question Paper Generator")
+file = st.file_uploader("Upload a PDF file", type=["pdf"])
+content = st.text_area("Content", key="content", help="Enter content if no PDF is uploaded")
+prompt = st.text_area("Prompt", key="prompt", help="Enter the prompt for generating the question paper")
+
+# JSON structure for question paper
+json_structure = {
+    "name": "name",
+    "course": "course",
+    "start_date": "start date",
+    "end_date": "end date",
+    "total_time": "total time",
+    "total_marks": "total marks",
+    "lessons": ["lessons"],
+    "questions": [
+        {
+            "section_name": "section name",
+            "description": "description",
+            "questions": [
+                {
+                    "question_id": "question id",
+                    "question_latex": "question latex",
+                    "answer_latex": "answer latex",
+                    "marks": "marks"
+                }
+            ]
+        }
+    ]
+}
+
+def _call_claude_api(assessment_data: Dict[str, Any]) -> str:
+    """Call Claude API to generate HTML from assessment data"""
     try:
-        doc = SimpleDocTemplate(output_path, pagesize=letter,
-                                topMargin=1*inch, bottomMargin=1*inch,
-                                leftMargin=1*inch, rightMargin=1*inch)
-
-        styles = getSampleStyleSheet()
-        story = []
-
-        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16,
-                                     alignment=1, spaceAfter=20, textColor=colors.darkblue)
-        question_style = ParagraphStyle('QuestionStyle', parent=styles['Normal'], fontSize=11, spaceAfter=10)
-        option_style = ParagraphStyle('OptionStyle', parent=styles['Normal'], leftIndent=20, spaceAfter=5)
-        answer_style = ParagraphStyle('AnswerStyle', parent=styles['Normal'], textColor=colors.darkgreen, spaceAfter=20)
-
-        story.append(Paragraph("JEE MCQs (Text Format)", title_style))
-
-        for i, mcq in enumerate(mcqs, 1):
-            question = mcq.get("question", "No Question")
-            options = mcq.get("options", [])
-            answer = mcq.get("answer", "N/A")
-
-            story.append(Paragraph(f"Q{i}. {question}", question_style))
-            for j, opt in enumerate(options):
-                story.append(Paragraph(f"{chr(65 + j)}) {opt}", option_style))
-            story.append(Paragraph(f"Answer: {answer}", answer_style))
-
-            if i % 4 == 0:
-                story.append(PageBreak())
-
-        doc.build(story)
-        return True
-    except Exception as e:
-        print(f"Error generating simple PDF: {e}")
-        return False
-
-def clean_latex(latex_str):
-    """Clean and prepare LaTeX string for rendering"""
-    if not latex_str:
-        return ""
-    
-    # Remove outer $$ if present
-    latex_str = latex_str.strip()
-    if latex_str.startswith('$$') and latex_str.endswith('$$'):
-        latex_str = latex_str[2:-2]
-    elif latex_str.startswith('$') and latex_str.endswith('$'):
-        latex_str = latex_str[1:-1]
-    
-    # Clean up common LaTeX issues
-    latex_str = latex_str.replace('\\text{', '\\mathrm{')
-    latex_str = latex_str.replace('\\displaystyle', '')
-    
-    return latex_str.strip()
-
-def latex_to_png(latex_str, dpi=300, fontsize=14):
-    """Convert LaTeX string to PNG image with proper mathematical rendering"""
-    try:
-        latex_str = clean_latex(latex_str)
-        
-        if not latex_str:
-            return create_text_image("", fontsize)
-        
-        # Set up matplotlib for LaTeX rendering
-        plt.rcParams['text.usetex'] = False  # Use mathtext instead of full LaTeX
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['mathtext.fontset'] = 'cm'
-        
-        fig, ax = plt.subplots(figsize=(12, 2))
-        ax.axis('off')
-        
-        # Try to render as math text
-        try:
-            ax.text(0.5, 0.5, f'${latex_str}$', 
-                   fontsize=fontsize, 
-                   ha='center', 
-                   va='center',
-                   transform=ax.transAxes,
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-        except Exception:
-            # If math rendering fails, try as regular text
-            ax.text(0.5, 0.5, latex_str, 
-                   fontsize=fontsize, 
-                   ha='center', 
-                   va='center',
-                   transform=ax.transAxes,
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-        
-        # Save to BytesIO
-        img_buf = io.BytesIO()
-        plt.savefig(img_buf, format='png', dpi=dpi, bbox_inches='tight', 
-                   facecolor='white', edgecolor='none', transparent=False)
-        plt.close(fig)
-        
-        img_buf.seek(0)
-        return img_buf
-        
-    except Exception as e:
-        print(f"Error rendering LaTeX '{latex_str}': {e}")
-        return create_text_image(latex_str, fontsize)
-
-def create_text_image(text, fontsize=14):
-    """Create a simple text image as fallback"""
-    fig, ax = plt.subplots(figsize=(10, 1))
-    ax.axis('off')
-    ax.text(0.5, 0.5, text, fontsize=fontsize, ha='center', va='center',
-           transform=ax.transAxes)
-    
-    img_buf = io.BytesIO()
-    plt.savefig(img_buf, format='png', dpi=300, bbox_inches='tight',
-               facecolor='white', edgecolor='none')
-    plt.close(fig)
-    
-    img_buf.seek(0)
-    return img_buf
-
-def get_image_dimensions(img_buf, width_limit=6*inch):
-    """Auto-scale image based on aspect ratio"""
-    try:
-        img = PILImage.open(img_buf)
-        orig_width, orig_height = img.size
-        aspect_ratio = orig_height / orig_width
-        target_width = width_limit
-        target_height = target_width * aspect_ratio
-        img_buf.seek(0)
-        return target_width, target_height
-    except Exception as e:
-        print(f"Error sizing image: {e}")
-        return width_limit, 0.8*inch  # fallback
-
-def generate_pdf(mcqs, output_path):
-    """Generate PDF with properly rendered mathematical expressions"""
-    try:
-        print(f"🚀 Starting PDF generation with {len(mcqs)} MCQs")
-
-        doc = SimpleDocTemplate(output_path, pagesize=letter, 
-                                topMargin=1*inch, bottomMargin=1*inch,
-                                leftMargin=1*inch, rightMargin=1*inch)
-        styles = getSampleStyleSheet()
-        story = []
-
-        # Styles
-        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16,
-                                     spaceAfter=30, alignment=1, textColor=colors.darkblue)
-        question_number_style = ParagraphStyle('QuestionNumberStyle', parent=styles['Normal'],
-                                               fontSize=12, spaceAfter=10,
-                                               textColor=colors.darkblue, fontName='Helvetica-Bold')
-        option_style = ParagraphStyle('OptionStyle', parent=styles['Normal'],
-                                      fontSize=10, leftIndent=30, spaceAfter=8)
-        answer_style = ParagraphStyle('AnswerStyle', parent=styles['Normal'],
-                                      fontSize=10, textColor=colors.darkgreen, fontName='Helvetica-Bold')
-
-        # Title
-        story.append(Paragraph("JEE MCQ Questions", title_style))
-        story.append(Spacer(1, 20))
-
-        for i, mcq in enumerate(mcqs, 1):
-            print(f"📝 Processing question {i}/{len(mcqs)}")
-
-            story.append(Paragraph(f"Question {i}:", question_number_style))
-
-            question_latex = mcq.get('question', '').strip()
-            print(f"  Rendering question LaTeX: {question_latex}")
-
-            if question_latex:
-                try:
-                    question_img_buf = latex_to_png(question_latex, dpi=300, fontsize=14)
-                    w, h = get_image_dimensions(question_img_buf, width_limit=6*inch)
-                    question_img = Image(question_img_buf, width=w, height=h)
-                    story.append(question_img)
-                except Exception as e:
-                    print(f"  ❌ Error rendering question: {e}")
-                    story.append(Paragraph(f"Error rendering question: {question_latex}", styles['Normal']))
-            else:
-                story.append(Paragraph("Question text missing", styles['Normal']))
-
-            story.append(Spacer(1, 15))
-
-            options = mcq.get('options', [])
-            labels = ['A', 'B', 'C', 'D']
-            print(f"  Processing {len(options)} options")
-
-            for j, option in enumerate(options[:4]):
-                if j < len(labels):
-                    story.append(Paragraph(f"{labels[j]})", option_style))
-                    if option:
-                        try:
-                            print(f"    Rendering option {labels[j]}: {option}")
-                            option_img_buf = latex_to_png(option, dpi=300, fontsize=12)
-                            w, h = get_image_dimensions(option_img_buf, width_limit=5*inch)
-                            option_img = Image(option_img_buf, width=w, height=h)
-                            story.append(option_img)
-                        except Exception as e:
-                            print(f"    ❌ Error rendering option {labels[j]}: {e}")
-                            story.append(Paragraph(f"{labels[j]}) Error rendering option", option_style))
-                    else:
-                        story.append(Paragraph("Option text missing", styles['Normal']))
-                    story.append(Spacer(1, 8))
-
-            answer = mcq.get('answer', '')
-            if answer:
-                story.append(Paragraph(f"Answer: {answer}", answer_style))
-
-            story.append(Spacer(1, 25))
-
-            if i % 3 == 0 and i < len(mcqs):
-                story.append(PageBreak())
-
-        print("🔨 Building PDF...")
-        doc.build(story)
-        print("✅ PDF generated successfully!")
-        return True
-
-    except Exception as e:
-        print(f"❌ Error generating PDF: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-# Utility: extract and clean MCQs from Claude's output
-def extract_and_save_mcqs(raw_json_path, clean_json_path):
-    with open(raw_json_path, 'r', encoding='utf-8') as f:
-        raw = json.load(f)
-    
-    # If the file is a list with a single dict with 'text', extract from there
-    if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict) and 'text' in raw[0]:
-        text = raw[0]['text']
-        # Try to extract the JSON array from the first [ to the last ]
-        start = text.find('[')
-        end = text.rfind(']')
-        if start != -1 and end != -1 and end > start:
-            json_str = text[start:end+1]
+        # Format the start date
+        start_date_raw = assessment_data.get("start_date")
+        if start_date_raw:
+            try:
+                parsed_date = datetime.fromisoformat(start_date_raw.replace('Z', '+00:00'))
+                ist_date = parsed_date.replace(tzinfo=pytz.utc).astimezone(timezone('Asia/Kolkata'))
+                start_date = ist_date.strftime("%d %B %Y, %I:%M %p")
+            except:
+                start_date = start_date_raw
         else:
-            json_str = text
-        try:
-            mcqs = json.loads(json_str)
-        except Exception as e:
-            mcqs = []
-            print(f"Error parsing MCQ JSON: {e}\nExtracted string: {json_str[:200]}...")
-    else:
-        mcqs = raw
-    
-    with open(clean_json_path, 'w', encoding='utf-8') as f:
-        json.dump(mcqs, f, ensure_ascii=False, indent=2)
-    return mcqs
+            start_date = datetime.now(timezone('Asia/Kolkata')).strftime("%d %B %Y, %I:%M %p")
 
-# Streamlit App
-st.title("JEE MCQ Generator with LaTeX Rendering")
-st.markdown("Generate MCQs from PDF images with proper mathematical symbol rendering")
+        # Prepare the prompt for HTML generation
+        html_prompt = f"""
+        Convert the following assessment data into a complete, print-friendly HTML document optimized for light mode:
+        {json.dumps(assessment_data, indent=2)}
+        Requirements:
+        - Create a complete HTML document with DOCTYPE, head, and body tags.
+        - Use modern CSS for a professional, light mode appearance (white background, black text, high contrast).
+        - Format all questions clearly with proper spacing and typography.
+        - Use MathJax for mathematical notation.
+        - Use Arial font, A4 page size, and 2cm margins.
+        - Preserve line breaks from LaTeX content by converting \\n or \\ to <br> tags.
+        - Include section headers with section name and total marks, followed by all questions with individual marks.
+        - For multiple choice questions, list all options with letters (A, B, C, D).
+        - For matching-type questions, use a table with two columns (Column I and Column II) and appropriate rows.
+        - For short answer questions, display the question text clearly.
+        - Ensure ALL questions in each section are included, iterating through the 'questions' array in each section.
+        - Use sup and sub tags for superscript and subscript.
+        - Return only the HTML document, no explanations.
 
-# User input for total number of MCQs desired
-total_mcqs = st.number_input(
-    "How many MCQs do you want to generate in total?",
-    min_value=1, max_value=100, value=20, step=2
-)
+        HTML Template:
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{assessment_data.get('name', 'Assessment')}</title>
+            <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+            <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+            <style>
+                body {{ font-family: 'Arial', sans-serif; margin: 20px; background: #ffffff; color: #000000; }}
+                @page {{ size: A4; margin: 2cm; }}
+                h1 {{ text-align: center; font-weight: bold; color: #000000; }}
+                h2 {{ text-align: center; font-weight: bold; color: #000000; }}
+                h4 {{ font-weight: bold; font-size: 12px; color: #000000; margin-bottom: 8px; }}
+                .container {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }}
+                .instructions {{ margin-top: 10px; font-size: 12px; color: #000000; background: #f8f9fa; padding: 10px; border-radius: 5px; }}
+                .left {{ float: left; width: 48%; margin-right: 2%; }}
+                .right {{ float: right; width: 48%; }}
+                .question {{ margin-bottom: 20px; color: #000000; page-break-inside: avoid; }}
+                .question-header {{ position: relative; width: 100%; min-height: 25px; margin-bottom: 10px; }}
+                .question-number {{ position: absolute; left: 0; top: 0; font-weight: bold; font-size: 16px; color: #000000; }}
+                .marks {{ position: absolute; right: 0; top: 0; font-size: 16px; font-weight: bold; color: #000000; }}
+                .section-header {{ position: relative; margin: 20px 0 15px 0; border-bottom: 2px solid #000000; padding-bottom: 5px; width: 100%; height: 25px; }}
+                .section-name {{ position: absolute; left: 0; top: 0; font-size: 18px; font-weight: bold; color: #000000; }}
+                .section-marks {{ position: absolute; right: 0; top: 0; font-size: 16px; font-weight: bold; color: #000000; }}
+                .question-content {{ margin-top: 10px; margin-bottom: 15px; color: #000000; white-space: pre-line; }}
+                .options {{ margin-top: 10px; margin-left: 20px; line-height: 1.8; color: #000000; font-size: 14px; }}
+                table {{ border-collapse: collapse; width: 100%; margin: 10px 0; color: #000000; }}
+                td, th {{ border: 2px solid #000000; padding: 10px; text-align: left; color: #000000; }}
+                th {{ background: #e6e6e6; font-weight: bold; color: #000000; }}
+                p {{ color: #000000; line-height: 1.5; }}
+                strong {{ color: #000000; font-weight: bold; }}
+                @media print {{
+                    body {{ margin: 0; background: #ffffff; }}
+                    .page-break {{ page-break-before: always; }}
+                    .instructions {{ background: #f8f9fa; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="flex" style="justify-content: space-between; align-items: center; gap: 10px;">
+                <div class="flex" style="flex-direction: column; align-items: center;">
+                    <h1>{assessment_data.get('name', 'School Name')}</h1>
+                    <h2>{assessment_data.get('course', 'Assessment')}</h2>
+                </div>
+            </div>
+            <div class="container">
+                <div class="left">
+                    <h4>Time - {assessment_data.get('total_time', 'N/A')} minutes</h4>
+                    <h4>Course - {assessment_data.get('course', 'Course Name')}</h4>
+                </div>
+                <div class="right">
+                    <h4>Date - {start_date}</h4>
+                    <h4>Max Marks - {assessment_data.get('total_marks', 'N/A')}</h4>
+                </div>
+            </div>
+            <h4>Instructions</h4>
+            <div class="instructions">
+                <ol>
+                    <li>This exam is scheduled for {start_date}</li>
+                    <li>The total duration of the exam is {assessment_data.get('total_time', 'N/A')} minutes.</li>
+                    <li>Read each question carefully before answering.</li>
+                    <li>Attempt all questions. There is no negative marking for wrong answers.</li>
+                    <li>Once the exam starts, the timer cannot be paused. Manage your time wisely.</li>
+                    <li>Any form of malpractice or cheating will result in disqualification.</li>
+                    <li>If you face any technical issues, contact the exam supervisor immediately.</li>
+                    <li>Best of luck!</li>
+                </ol>
+            </div>
+           <!-- Iterate over each section in assessment_data['questions'] -->
+            <!-- For each section, create a div with class="section-header" containing the section name and total marks -->
+            <!-- For each question in the section, create a div with class="question" containing the question number, LaTeX content, and marks -->
+        </body>
+        </html>
+        """
 
-# Batch size for each Claude call
-BATCH_SIZE = 3
-
-uploaded_file = st.file_uploader("Upload a PDF with MCQ questions", type=["pdf"])
-
-if uploaded_file:
-    # Reset final_mcqs.json at the start of a new session
-    final_mcqs_path = "final_mcqs.json"
-    if os.path.exists(final_mcqs_path):
-        os.remove(final_mcqs_path)
-    st.success("PDF uploaded successfully.")
-
-    pdf_bytes = uploaded_file.read()
-    image_contents = []
-    output_dir = "extracted_images"
-    
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        for i in range(len(doc)):
-            try:
-                page = doc.load_page(i)
-                pix = page.get_pixmap(dpi=200)
-                img_bytes = pix.tobytes("png")
-                img_b64 = base64.b64encode(img_bytes).decode('utf-8')
-                image_contents.append({
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/png", "data": img_b64}
-                })
-
-                # Save image to directory
-                img_path = os.path.join(output_dir, f"page_{i+1}.png")
-                pix.save(img_path)
-
-            except Exception as e:
-                st.warning(f"Skipping page {i+1} due to error: {e}")
-                continue
-                
-        doc.close()
-        
+        response = claude_client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=4000,
+            temperature=0.1,
+            messages=[
+                {
+                    "role": "user",
+                    "content": html_prompt
+                }
+            ]
+        )
+        return response.content[0].text
     except Exception as e:
-        st.error(f"Error converting PDF to images: {e}")
+        raise Exception(f"Failed to generate HTML content: {str(e)}")
+# Main application logic
+if st.button("Generate Question Paper"):
+    if not (file or content) or not prompt:
+        st.error("Please upload a PDF file or enter content and provide a prompt.")
         st.stop()
-    
-    if not image_contents:
-        st.error("No images could be extracted from the PDF.")
-        st.stop()
 
-    CLAUDE_API_KEY = os.getenv("claude_api")
-    if not CLAUDE_API_KEY:
-        st.error("Claude API key not found. Please set the 'claude_api' environment variable.")
-        st.stop()
-        
-    CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-    headers = {
-        "x-api-key": CLAUDE_API_KEY,
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01"
-    }
-
-    # Load existing MCQs if present
-    all_mcqs = []
-
-    # Helper to deduplicate by question text
-    def dedup_mcqs(mcq_list):
-        seen = set()
-        unique = []
-        for mcq in mcq_list:
-            q = mcq.get('question', '').strip()
-            if q and q not in seen:
-                seen.add(q)
-                unique.append(mcq)
-        return unique
-
-    # Initialize session state for MCQs
-    if 'mcqs_generated' not in st.session_state:
-        st.session_state.mcqs_generated = False
-        st.session_state.mcqs_data = []
-
-    # Generate MCQs button
-    if st.button("Generate MCQs"):
-        # Progress bar and info placeholder
-        progress_bar = st.progress(0)
-        progress_info = st.empty()
-
-        num_batches = (total_mcqs + BATCH_SIZE - 1) // BATCH_SIZE
-        
-        for batch in range(num_batches):
-            batch_size = min(BATCH_SIZE, total_mcqs - len(all_mcqs))
-            
-            # Randomly select 2 images for this batch
-            if len(image_contents) > 2:
-                batch_images = random.sample(image_contents, 2)
-            else:
-                batch_images = image_contents
-            
-            # Collect only the last 10 previous questions for prompt
-            prev_questions = [mcq.get('question', '').strip() for mcq in all_mcqs if mcq.get('question')]
-            prev_questions_limited = prev_questions[-10:]
-            prev_questions_text = "\n".join(prev_questions_limited)
-            
-            prompt = (
-                f"Extract {batch_size} unique MCQ questions from these images. "
-                f"Return the result as a JSON array of {batch_size} objects. "
-                "Each object must have exactly these keys: 'question', 'options', and 'answer'. "
-                "'question' and each element of 'options' must be valid LaTeX strings for mathematical expressions, wrapped in double dollar signs ($ ... $). "
-                "'answer' is the correct option as a string (A, B, C, or D). "
-                "Ensure all mathematical symbols, fractions, integrals, derivatives, etc. are properly formatted in LaTeX. "
-                "Do not include any explanations. Output only the JSON array. "
-                "Do not repeat any question from previous batches. Generate new and different questions each time. "
-                f"Here are some questions already generated so far (do NOT repeat these):\n{prev_questions_text}"
-            )
-            
-            data = {
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 2048,
-                "messages": [
-                    {"role": "user", "content": [
-                        {"type": "text", "text": prompt},
-                        *batch_images
-                    ]}
-                ]
-            }
-            
-            try:
-                response = requests.post(CLAUDE_API_URL, headers=headers, json=data)
-                if response.status_code != 200:
-                    st.error(f"Claude API error: {response.text}")
-                    st.stop()
-                    
-                result = response.json()
-                content = result.get("content", "")
-                
-                # Save raw Claude output for reference
-                with open("claude_mcqs.json", "w", encoding="utf-8") as f:
-                    if isinstance(content, list):
-                        f.write(json.dumps(content, ensure_ascii=False, indent=2))
-                    else:
-                        f.write(json.dumps([{"type": "text", "text": content}], ensure_ascii=False, indent=2))
-
-                # Extract, clean, and convert to LaTeX
-                mcqs_json = extract_and_save_mcqs("claude_mcqs.json", "claude_mcqs_clean.json")
-                if isinstance(mcqs_json, list):
-                    all_mcqs.extend(mcqs_json)
-                    all_mcqs = dedup_mcqs(all_mcqs)
-                else:
-                    st.warning("Claude did not return a valid MCQ list in this batch.")
-
-                # Show progress after each batch
-                percent = min(100, int(100 * len(all_mcqs) / total_mcqs))
-                progress_bar.progress(percent)
-                progress_info.info(f"Progress: {min(len(all_mcqs), total_mcqs)} / {total_mcqs} MCQs generated ({percent}%)")
-
-                if len(all_mcqs) >= total_mcqs:
-                    break
-                    
-            except Exception as e:
-                st.error(f"Error in batch {batch + 1}: {e}")
-                continue
-
-        # Save all MCQs to final file
-        final_mcqs = all_mcqs[:total_mcqs]
-        with open(final_mcqs_path, "w", encoding="utf-8") as f:
-            json.dump(final_mcqs, f, ensure_ascii=False, indent=2)
-            
-        # Update session state
-        st.session_state.mcqs_generated = True
-        st.session_state.mcqs_data = final_mcqs
-
-        st.success(f"Generated {len(final_mcqs)} MCQs successfully!")
-        st.rerun()  # Refresh the page to show the new buttons
-
-# Check if MCQs exist (either in session state or file) and show download options
-if st.session_state.mcqs_generated:
-    st.subheader("Download Options")
-    
-    # Load MCQs if not in session state
-    if not st.session_state.mcqs_generated:
+    # Extract text from PDF if provided
+    if file:
         try:
-            with open(final_mcqs_path, 'r', encoding='utf-8') as f:
-                st.session_state.mcqs_data = json.load(f)
-                st.session_state.mcqs_generated = True
+            with pdfplumber.open(file) as pdf:
+                pdf_text = ""
+                for page in pdf.pages:
+                    pdf_text += page.extract_text() or ""
+                content = pdf_text
         except Exception as e:
-            st.error(f"Error loading MCQs: {e}")
-    
-    # Show current status
-    if st.session_state.mcqs_data:
-        st.info(f"📊 {len(st.session_state.mcqs_data)} MCQs ready for download")
-    
-    # Generate and download PDF
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("📝 Generate Simple Text PDF", help="Click to download plain MCQ PDF as text"):
-            if not st.session_state.mcqs_data:
-                st.error("No MCQs found. Please generate MCQs first.")
-            else:
-                try:
-                    pdf_text_path = "jee_mcqs_text.pdf"
-                    with st.spinner("Creating clean text-based PDF..."):
-                        success = generate_simple_pdf(st.session_state.mcqs_data, pdf_text_path)
-    
-                    if success and os.path.exists(pdf_text_path):
-                        st.success("✅ Text-only MCQ PDF generated!")
-                        with open(pdf_text_path, "rb") as f:
-                            st.download_button(
-                                label="📄 Download MCQs PDF (Text Only)",
-                                data=f.read(),
-                                file_name="jee_mcqs_text.pdf",
-                                mime="application/pdf",
-                                key="download_text_pdf"
-                            )
-                    else:
-                        st.error("Failed to generate text-only MCQ PDF.")
-    
-                except Exception as e:
-                    st.error(f"❌ Error generating text PDF: {str(e)}")
-                    st.exception(e)
+            st.error(f"Error extracting text from PDF: {str(e)}")
+            st.stop()
 
-    with col2:
-        # Download button for JSON
-        if st.session_state.mcqs_data:
-            json_data = json.dumps(st.session_state.mcqs_data, ensure_ascii=False, indent=2)
-            st.download_button(
-                label="📋 Download MCQs JSON",
-                data=json_data,
-                file_name="jee_mcqs.json",
-                mime="application/json",
-                key="download_json"
-            )
+    # Prepare the user prompt for JSON generation
+    user_prompt = f"""
+    You are an expert question paper generator. Generate a question paper based on the provided content and prompt.
+    The question paper should:
+    - Be in the language and style of the prompt.
+    - Follow the JSON structure: {json.dumps(json_structure, indent=2)}
+    - Include LaTeX code for questions and answers in the specified JSON format.
+    Content: {content}
+    Prompt: {prompt}
+    Return only the JSON output, no explanations.
+    do not include ```json or ``` in the response.
+    """
 
-    # Preview some MCQs
-    st.subheader("Preview Generated MCQs")
-    if st.session_state.mcqs_data:
-        # Show first 2 MCQs as preview
-        for i, mcq in enumerate(st.session_state.mcqs_data, 1):
-            with st.expander(f"Preview Question {i}"):
-                st.write("**Question:**", mcq.get('question', 'N/A'))
-                st.write("**Options:**")
-                options = mcq.get('options', [])
-                for j, option in enumerate(options):
-                    st.write(f"  {chr(65+j)}) {option}")
-                st.write("**Answer:**", mcq.get('answer', 'N/A'))
-    else:
-        st.info("No MCQs to preview. Generate MCQs first.")
+    try:
+        # Generate JSON question paper
+        response = claude_client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=4000,
+            temperature=0.1,
+            messages=[
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ]
+        )
+        # Debug: Show the raw response
+        st.markdown("#### Raw Claude Response")
+        st.code(response.content[0].text)
+        # Parse JSON response
+        try:
+            assessment_data = json.loads(response.content[0].text)
+        except json.JSONDecodeError as e:
+            st.error(f"Invalid JSON response from Claude: {str(e)}")
+            st.stop()
+
+        # Validate JSON structure
+        if not isinstance(assessment_data, dict) or "questions" not in assessment_data:
+            st.error("Generated JSON data does not match the required structure.")
+            st.stop()
+        st.markdown(json.dumps(assessment_data, indent=2))
+        html_content = _call_claude_api(assessment_data)
+
+        # Display preview
+        st.markdown("### Question Paper Preview")
+        st.components.v1.html(html_content, height=600, scrolling=True)
+
+        # Add download button
+        st.download_button(
+            label="Download Question Paper",
+            data=html_content,
+            file_name="question_paper.html",
+            mime="text/html"
+        )
+
+    except Exception as e:
+        st.error(f"Error generating question paper: {str(e)}")
