@@ -25,9 +25,9 @@ from PIL import Image as PILImage
 
 # Initialize the session state variable if it doesn't exist
 if 'mcqs_generated' not in st.session_state:
-    st.session_state.mcqs_generated = False  # or whatever default value you need
+    st.session_state.mcqs_generated = False
 
-def generate_simple_pdf(mcqs, output_path):
+def generate_simple_pdf(mcqs, output_path, exam_type="", difficulty=""):
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -42,20 +42,44 @@ def generate_simple_pdf(mcqs, output_path):
         styles = getSampleStyleSheet()
         story = []
 
+        # Enhanced title with exam type and difficulty
+        title_text = f"JEE {exam_type} MCQs - {difficulty} Level" if exam_type and difficulty else "JEE MCQs"
         title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16,
                                      alignment=1, spaceAfter=20, textColor=colors.darkblue)
+        
+        subtitle_style = ParagraphStyle('SubtitleStyle', parent=styles['Normal'], fontSize=12,
+                                       alignment=1, spaceAfter=30, textColor=colors.darkgreen,
+                                       fontName='Helvetica-Bold')
+        
         question_style = ParagraphStyle('QuestionStyle', parent=styles['Normal'], fontSize=11, spaceAfter=10)
         option_style = ParagraphStyle('OptionStyle', parent=styles['Normal'], leftIndent=20, spaceAfter=5)
         answer_style = ParagraphStyle('AnswerStyle', parent=styles['Normal'], textColor=colors.darkgreen, spaceAfter=20)
+        
+        # Difficulty color coding
+        difficulty_colors = {
+            'Easy': colors.green,
+            'Medium': colors.orange,
+            'Hard': colors.red
+        }
+        
+        difficulty_color = difficulty_colors.get(difficulty, colors.black)
 
-        story.append(Paragraph("JEE MCQs (Text Format)", title_style))
+        story.append(Paragraph(title_text, title_style))
+        if exam_type and difficulty:
+            story.append(Paragraph(f"Total Questions: {len(mcqs)}", subtitle_style))
 
         for i, mcq in enumerate(mcqs, 1):
             question = mcq.get("question", "No Question")
             options = mcq.get("options", [])
             answer = mcq.get("answer", "N/A")
+            mcq_difficulty = mcq.get("difficulty", difficulty)
 
-            story.append(Paragraph(f"Q{i}. {question}", question_style))
+            # Question with difficulty indicator
+            question_text = f"Q{i}. {question}"
+            if mcq_difficulty:
+                question_text += f" [{mcq_difficulty}]"
+            
+            story.append(Paragraph(question_text, question_style))
             for j, opt in enumerate(options):
                 story.append(Paragraph(f"{chr(65 + j)}) {opt}", option_style))
             story.append(Paragraph(f"Answer: {answer}", answer_style))
@@ -162,7 +186,7 @@ def get_image_dimensions(img_buf, width_limit=6*inch):
         print(f"Error sizing image: {e}")
         return width_limit, 0.8*inch  # fallback
 
-def generate_pdf(mcqs, output_path):
+def generate_pdf(mcqs, output_path, exam_type="", difficulty=""):
     """Generate PDF with properly rendered mathematical expressions"""
     try:
         print(f"🚀 Starting PDF generation with {len(mcqs)} MCQs")
@@ -173,9 +197,15 @@ def generate_pdf(mcqs, output_path):
         styles = getSampleStyleSheet()
         story = []
 
-        # Styles
+        # Enhanced title with exam type and difficulty
+        title_text = f"JEE {exam_type} MCQs - {difficulty} Level" if exam_type and difficulty else "JEE MCQ Questions"
         title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16,
                                      spaceAfter=30, alignment=1, textColor=colors.darkblue)
+        
+        subtitle_style = ParagraphStyle('SubtitleStyle', parent=styles['Normal'], fontSize=12,
+                                       alignment=1, spaceAfter=20, textColor=colors.darkgreen,
+                                       fontName='Helvetica-Bold')
+        
         question_number_style = ParagraphStyle('QuestionNumberStyle', parent=styles['Normal'],
                                                fontSize=12, spaceAfter=10,
                                                textColor=colors.darkblue, fontName='Helvetica-Bold')
@@ -184,14 +214,20 @@ def generate_pdf(mcqs, output_path):
         answer_style = ParagraphStyle('AnswerStyle', parent=styles['Normal'],
                                       fontSize=10, textColor=colors.darkgreen, fontName='Helvetica-Bold')
 
-        # Title
-        story.append(Paragraph("JEE MCQ Questions", title_style))
+        # Title and subtitle
+        story.append(Paragraph(title_text, title_style))
+        if exam_type and difficulty:
+            story.append(Paragraph(f"Total Questions: {len(mcqs)}", subtitle_style))
         story.append(Spacer(1, 20))
 
         for i, mcq in enumerate(mcqs, 1):
             print(f"📝 Processing question {i}/{len(mcqs)}")
 
-            story.append(Paragraph(f"Question {i}:", question_number_style))
+            mcq_difficulty = mcq.get("difficulty", difficulty)
+            question_header = f"Question {i}"
+            if mcq_difficulty:
+                question_header += f" [{mcq_difficulty}]"
+            story.append(Paragraph(question_header, question_number_style))
 
             question_latex = mcq.get('question', '').strip()
             print(f"  Rendering question LaTeX: {question_latex}")
@@ -251,6 +287,26 @@ def generate_pdf(mcqs, output_path):
         traceback.print_exc()
         return False
 
+def get_difficulty_prompt(difficulty, exam_type):
+    """Generate appropriate prompts based on difficulty and exam type"""
+    
+    difficulty_guidelines = {
+        'Easy': {
+            'JEE Mains': "Focus on basic conceptual questions, direct formula applications, and straightforward problem-solving. Questions should test fundamental understanding without complex calculations.",
+            'JEE Advanced': "Include conceptual questions with moderate complexity, requiring good understanding of fundamentals but not extremely challenging calculations."
+        },
+        'Medium': {
+            'JEE Mains': "Include questions requiring moderate problem-solving skills, combination of concepts, and multi-step solutions. Suitable for average to good students.",
+            'JEE Advanced': "Focus on questions requiring strong conceptual understanding, multi-concept integration, and moderate to complex problem-solving skills."
+        },
+        'Hard': {
+            'JEE Mains': "Include challenging questions requiring deep conceptual understanding, complex problem-solving, and advanced application of concepts.",
+            'JEE Advanced': "Focus on highly challenging questions requiring exceptional problem-solving skills, deep conceptual mastery, and ability to handle complex multi-step problems with novel approaches."
+        }
+    }
+    
+    return difficulty_guidelines.get(difficulty, {}).get(exam_type, "")
+
 # Utility: extract and clean MCQs from Claude's output
 def extract_and_save_mcqs(raw_json_path, clean_json_path):
     with open(raw_json_path, 'r', encoding='utf-8') as f:
@@ -279,26 +335,54 @@ def extract_and_save_mcqs(raw_json_path, clean_json_path):
     return mcqs
 
 # Streamlit App
-st.title("JEE MCQ Generator with LaTeX Rendering")
-st.markdown("Generate MCQs from PDF images with proper mathematical symbol rendering")
+st.title("🎯 JEE MCQ Generator with Difficulty Levels")
+st.markdown("Generate customized MCQs from PDF images with proper mathematical symbol rendering")
+
+# Create two columns for exam type and difficulty selection
+col1, col2 = st.columns(2)
+
+with col1:
+    exam_type = st.selectbox(
+        "📚 Select Exam Type:",
+        ["JEE Mains", "JEE Advanced"],
+        help="Choose the exam type for appropriate question difficulty and pattern"
+    )
+
+with col2:
+    difficulty = st.selectbox(
+        "🎚️ Select Difficulty Level:",
+        ["Easy", "Medium", "Hard"],
+        index=1,  # Default to Medium
+        help="Choose difficulty level based on your preparation level"
+    )
+
+# Display difficulty description
+difficulty_descriptions = {
+    "Easy": "💚 **Easy**: Basic conceptual questions, direct formula applications",
+    "Medium": "🧡 **Medium**: Moderate problem-solving, combination of concepts", 
+    "Hard": "❤️ **Hard**: Complex problem-solving, deep conceptual understanding"
+}
+
+st.info(difficulty_descriptions[difficulty])
 
 # User input for total number of MCQs desired
 total_mcqs = st.number_input(
-    "How many MCQs do you want to generate in total?",
-    min_value=1, max_value=100, value=20, step=2
+    "🔢 How many MCQs do you want to generate?",
+    min_value=1, max_value=100, value=20, step=2,
+    help="Recommended: 20-30 for practice sessions"
 )
 
 # Batch size for each Claude call
 BATCH_SIZE = 3
 
-uploaded_file = st.file_uploader("Upload a PDF with MCQ questions", type=["pdf"])
+uploaded_file = st.file_uploader("📁 Upload a PDF with MCQ questions", type=["pdf"])
 
 if uploaded_file:
     # Reset final_mcqs.json at the start of a new session
     final_mcqs_path = "final_mcqs.json"
     if os.path.exists(final_mcqs_path):
         os.remove(final_mcqs_path)
-    st.success("PDF uploaded successfully.")
+    st.success("✅ PDF uploaded successfully.")
 
     pdf_bytes = uploaded_file.read()
     image_contents = []
@@ -368,9 +452,15 @@ if uploaded_file:
     if 'mcqs_generated' not in st.session_state:
         st.session_state.mcqs_generated = False
         st.session_state.mcqs_data = []
+        st.session_state.exam_type = None
+        st.session_state.difficulty = None
 
     # Generate MCQs button
-    if st.button("Generate MCQs"):
+    if st.button("🚀 Generate MCQs", type="primary"):
+        # Store current settings
+        st.session_state.exam_type = exam_type
+        st.session_state.difficulty = difficulty
+        
         # Progress bar and info placeholder
         progress_bar = st.progress(0)
         progress_info = st.empty()
@@ -391,13 +481,19 @@ if uploaded_file:
             prev_questions_limited = prev_questions[-10:]
             prev_questions_text = "\n".join(prev_questions_limited)
             
+            # Get difficulty-specific guidelines
+            difficulty_guide = get_difficulty_prompt(difficulty, exam_type)
+            
             prompt = (
-                f"Extract {batch_size} unique MCQ questions from these images. "
+                f"Extract {batch_size} unique MCQ questions from these images for {exam_type} at {difficulty} difficulty level. "
+                f"DIFFICULTY GUIDELINES: {difficulty_guide} "
                 f"Return the result as a JSON array of {batch_size} objects. "
-                "Each object must have exactly these keys: 'question', 'options', and 'answer'. "
+                "Each object must have exactly these keys: 'question', 'options', 'answer', and 'difficulty'. "
                 "'question' and each element of 'options' must be valid LaTeX strings for mathematical expressions, wrapped in double dollar signs ($ ... $). "
                 "'answer' is the correct option as a string (A, B, C, or D). "
+                f"'difficulty' should be '{difficulty}'. "
                 "Ensure all mathematical symbols, fractions, integrals, derivatives, etc. are properly formatted in LaTeX. "
+                "Make sure questions match the specified difficulty level and exam type requirements. "
                 "Do not include any explanations. Output only the JSON array. "
                 "Do not repeat any question from previous batches. Generate new and different questions each time. "
                 f"Here are some questions already generated so far (do NOT repeat these):\n{prev_questions_text}"
@@ -433,6 +529,11 @@ if uploaded_file:
                 # Extract, clean, and convert to LaTeX
                 mcqs_json = extract_and_save_mcqs("claude_mcqs.json", "claude_mcqs_clean.json")
                 if isinstance(mcqs_json, list):
+                    # Add difficulty info if missing
+                    for mcq in mcqs_json:
+                        if 'difficulty' not in mcq:
+                            mcq['difficulty'] = difficulty
+                    
                     all_mcqs.extend(mcqs_json)
                     all_mcqs = dedup_mcqs(all_mcqs)
                 else:
@@ -441,7 +542,7 @@ if uploaded_file:
                 # Show progress after each batch
                 percent = min(100, int(100 * len(all_mcqs) / total_mcqs))
                 progress_bar.progress(percent)
-                progress_info.info(f"Progress: {min(len(all_mcqs), total_mcqs)} / {total_mcqs} MCQs generated ({percent}%)")
+                progress_info.info(f"🔄 Progress: {min(len(all_mcqs), total_mcqs)} / {total_mcqs} MCQs generated ({percent}%)")
 
                 if len(all_mcqs) >= total_mcqs:
                     break
@@ -459,12 +560,12 @@ if uploaded_file:
         st.session_state.mcqs_generated = True
         st.session_state.mcqs_data = final_mcqs
 
-        st.success(f"Generated {len(final_mcqs)} MCQs successfully!")
+        st.success(f"🎉 Generated {len(final_mcqs)} {exam_type} MCQs at {difficulty} level successfully!")
         st.rerun()  # Refresh the page to show the new buttons
 
 # Check if MCQs exist (either in session state or file) and show download options
 if st.session_state.mcqs_generated:
-    st.subheader("Download Options")
+    st.subheader("📥 Download Options")
     
     # Load MCQs if not in session state
     if not st.session_state.mcqs_generated:
@@ -477,61 +578,116 @@ if st.session_state.mcqs_generated:
     
     # Show current status
     if st.session_state.mcqs_data:
-        st.info(f"📊 {len(st.session_state.mcqs_data)} MCQs ready for download")
+        exam_info = f"{st.session_state.exam_type} - {st.session_state.difficulty}" if st.session_state.exam_type else ""
+        st.info(f"📊 {len(st.session_state.mcqs_data)} MCQs ready for download {exam_info}")
     
     # Generate and download PDF
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📝 Generate Simple Text PDF", help="Click to download plain MCQ PDF as text"):
+        if st.button("📝 Generate PDF", help="Click to download MCQ PDF with difficulty levels"):
             if not st.session_state.mcqs_data:
                 st.error("No MCQs found. Please generate MCQs first.")
             else:
                 try:
-                    pdf_text_path = "jee_mcqs_text.pdf"
-                    with st.spinner("Creating clean text-based PDF..."):
-                        success = generate_simple_pdf(st.session_state.mcqs_data, pdf_text_path)
+                    exam_type_file = st.session_state.exam_type or exam_type
+                    difficulty_file = st.session_state.difficulty or difficulty
+                    pdf_filename = f"jee_{exam_type_file.lower().replace(' ', '_')}_{difficulty_file.lower()}_mcqs.pdf"
+                    
+                    with st.spinner("Creating PDF with difficulty levels..."):
+                        success = generate_simple_pdf(
+                            st.session_state.mcqs_data, 
+                            pdf_filename,
+                            exam_type_file,
+                            difficulty_file
+                        )
     
-                    if success and os.path.exists(pdf_text_path):
-                        st.success("✅ Text-only MCQ PDF generated!")
-                        with open(pdf_text_path, "rb") as f:
+                    if success and os.path.exists(pdf_filename):
+                        st.success(f"✅ {exam_type_file} {difficulty_file} MCQ PDF generated!")
+                        with open(pdf_filename, "rb") as f:
                             st.download_button(
-                                label="📄 Download MCQs PDF (Text Only)",
+                                label=f"📄 Download {exam_type_file} {difficulty_file} MCQs PDF",
                                 data=f.read(),
-                                file_name="jee_mcqs_text.pdf",
+                                file_name=pdf_filename,
                                 mime="application/pdf",
-                                key="download_text_pdf"
+                                key="download_pdf"
                             )
                     else:
-                        st.error("Failed to generate text-only MCQ PDF.")
+                        st.error("Failed to generate MCQ PDF.")
     
                 except Exception as e:
-                    st.error(f"❌ Error generating text PDF: {str(e)}")
+                    st.error(f"❌ Error generating PDF: {str(e)}")
                     st.exception(e)
 
     with col2:
         # Download button for JSON
         if st.session_state.mcqs_data:
             json_data = json.dumps(st.session_state.mcqs_data, ensure_ascii=False, indent=2)
+            exam_type_file = st.session_state.exam_type or exam_type
+            difficulty_file = st.session_state.difficulty or difficulty
+            json_filename = f"jee_{exam_type_file.lower().replace(' ', '_')}_{difficulty_file.lower()}_mcqs.json"
+            
             st.download_button(
                 label="📋 Download MCQs JSON",
                 data=json_data,
-                file_name="jee_mcqs.json",
+                file_name=json_filename,
                 mime="application/json",
                 key="download_json"
             )
 
-    # Preview some MCQs
-    st.subheader("Preview Generated MCQs")
+    # Statistics
     if st.session_state.mcqs_data:
-        # Show first 2 MCQs as preview
-        for i, mcq in enumerate(st.session_state.mcqs_data, 1):
-            with st.expander(f"Preview Question {i}"):
+        st.subheader("📈 Statistics")
+        
+        # Count questions by difficulty
+        difficulty_counts = {}
+        for mcq in st.session_state.mcqs_data:
+            diff = mcq.get('difficulty', 'Unknown')
+            difficulty_counts[diff] = difficulty_counts.get(diff, 0) + 1
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("📊 Total Questions", len(st.session_state.mcqs_data))
+        
+        with col2:
+            if st.session_state.exam_type:
+                st.metric("📚 Exam Type", st.session_state.exam_type)
+            
+        with col3:
+            if difficulty_counts:
+                most_common_diff = max(difficulty_counts.items(), key=lambda x: x[1])
+                st.metric("🎯 Primary Difficulty", f"{most_common_diff[0]} ({most_common_diff[1]})")
+
+    # Preview some MCQs
+    st.subheader("👀 Preview Generated MCQs")
+    if st.session_state.mcqs_data:
+        # Show first 3 MCQs as preview
+        for i, mcq in enumerate(st.session_state.mcqs_data[:3], 1):
+            difficulty_emoji = {"Easy": "💚", "Medium": "🧡", "Hard": "❤️"}
+            mcq_difficulty = mcq.get('difficulty', 'Unknown')
+            difficulty_display = f"{difficulty_emoji.get(mcq_difficulty, '⚪')} {mcq_difficulty}"
+            
+            with st.expander(f"Preview Question {i} - {difficulty_display}"):
                 st.write("**Question:**", mcq.get('question', 'N/A'))
                 st.write("**Options:**")
                 options = mcq.get('options', [])
                 for j, option in enumerate(options):
                     st.write(f"  {chr(65+j)}) {option}")
                 st.write("**Answer:**", mcq.get('answer', 'N/A'))
+                st.write("**Difficulty:**", mcq.get('difficulty', 'Not specified'))
     else:
         st.info("No MCQs to preview. Generate MCQs first.")
+
+# Add footer with tips
+st.markdown("---")
+st.markdown("### 💡 Tips for Better Results:")
+st.markdown("""
+- **Easy Level**: Perfect for beginners and concept building
+- **Medium Level**: Ideal for regular practice and competitive preparation  
+- **Hard Level**: Suitable for advanced preparation and challenging practice
+- **JEE Mains**: Focus on NCERT-based concepts and moderate problem-solving
+- **JEE Advanced**: Emphasis on conceptual depth and complex problem-solving
+- Upload clear, high-quality PDF images for better question extraction
+- Generate 20-30 questions at a time for optimal practice sessions
+""")
