@@ -21,6 +21,7 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import io
 import numpy as np
+from PIL import Image as PILImage
 
 # Initialize the session state variable if it doesn't exist
 if 'mcqs_generated' not in st.session_state:
@@ -105,43 +106,41 @@ def create_text_image(text, fontsize=14):
     img_buf.seek(0)
     return img_buf
 
+def get_image_dimensions(img_buf, width_limit=6*inch):
+    """Auto-scale image based on aspect ratio"""
+    try:
+        img = PILImage.open(img_buf)
+        orig_width, orig_height = img.size
+        aspect_ratio = orig_height / orig_width
+        target_width = width_limit
+        target_height = target_width * aspect_ratio
+        img_buf.seek(0)
+        return target_width, target_height
+    except Exception as e:
+        print(f"Error sizing image: {e}")
+        return width_limit, 0.8*inch  # fallback
+
 def generate_pdf(mcqs, output_path):
     """Generate PDF with properly rendered mathematical expressions"""
     try:
         print(f"🚀 Starting PDF generation with {len(mcqs)} MCQs")
-        
+
         doc = SimpleDocTemplate(output_path, pagesize=letter, 
-                               topMargin=1*inch, bottomMargin=1*inch,
-                               leftMargin=1*inch, rightMargin=1*inch)
+                                topMargin=1*inch, bottomMargin=1*inch,
+                                leftMargin=1*inch, rightMargin=1*inch)
         styles = getSampleStyleSheet()
         story = []
 
-        # Custom styles
-        title_style = ParagraphStyle(
-            'TitleStyle',
-            parent=styles['Heading1'],
-            fontSize=16,
-            spaceAfter=30,
-            alignment=1,  # Center alignment
-            textColor=colors.darkblue
-        )
-        
-        question_number_style = ParagraphStyle(
-            'QuestionNumberStyle',
-            parent=styles['Normal'],
-            fontSize=12,
-            spaceAfter=10,
-            textColor=colors.darkblue,
-            fontName='Helvetica-Bold'
-        )
-        
-        option_style = ParagraphStyle(
-            'OptionStyle',
-            parent=styles['Normal'],
-            fontSize=10,
-            leftIndent=30,
-            spaceAfter=8
-        )
+        # Styles
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16,
+                                     spaceAfter=30, alignment=1, textColor=colors.darkblue)
+        question_number_style = ParagraphStyle('QuestionNumberStyle', parent=styles['Normal'],
+                                               fontSize=12, spaceAfter=10,
+                                               textColor=colors.darkblue, fontName='Helvetica-Bold')
+        option_style = ParagraphStyle('OptionStyle', parent=styles['Normal'],
+                                      fontSize=10, leftIndent=30, spaceAfter=8)
+        answer_style = ParagraphStyle('AnswerStyle', parent=styles['Normal'],
+                                      fontSize=10, textColor=colors.darkgreen, fontName='Helvetica-Bold')
 
         # Title
         story.append(Paragraph("JEE MCQ Questions", title_style))
@@ -149,80 +148,61 @@ def generate_pdf(mcqs, output_path):
 
         for i, mcq in enumerate(mcqs, 1):
             print(f"📝 Processing question {i}/{len(mcqs)}")
-            
-            # Question number
+
             story.append(Paragraph(f"Question {i}:", question_number_style))
-            
-            # Question with LaTeX rendering
-            try:
-                question_latex = mcq.get('question', '')
-                print(f"  Question LaTeX: {question_latex[:50]}...")
-                
-                if question_latex:
+
+            question_latex = mcq.get('question', '').strip()
+            print(f"  Rendering question LaTeX: {question_latex}")
+
+            if question_latex:
+                try:
                     question_img_buf = latex_to_png(question_latex, dpi=300, fontsize=14)
-                    question_img = Image(question_img_buf, width=6*inch, height=0.8*inch)
+                    w, h = get_image_dimensions(question_img_buf, width_limit=6*inch)
+                    question_img = Image(question_img_buf, width=w, height=h)
                     story.append(question_img)
-                else:
-                    story.append(Paragraph("Question text missing", styles['Normal']))
-                    print("  ⚠️ Question text missing")
-                    
-            except Exception as e:
-                print(f"  ❌ Error rendering question: {e}")
-                story.append(Paragraph(f"Error rendering question: {question_latex}", styles['Normal']))
-            
+                except Exception as e:
+                    print(f"  ❌ Error rendering question: {e}")
+                    story.append(Paragraph(f"Error rendering question: {question_latex}", styles['Normal']))
+            else:
+                story.append(Paragraph("Question text missing", styles['Normal']))
+
             story.append(Spacer(1, 15))
 
-            # Options
             options = mcq.get('options', [])
             labels = ['A', 'B', 'C', 'D']
             print(f"  Processing {len(options)} options")
-            
-            for j, option in enumerate(options[:4]):  # Ensure max 4 options
-                if j < len(labels):
-                    try:
-                        # Option label
-                        story.append(Paragraph(f"{labels[j]})", option_style))
-                        
-                        # Option with LaTeX rendering
-                        if option:
-                            print(f"    Option {labels[j]}: {option[:30]}...")
-                            option_img_buf = latex_to_png(option, dpi=300, fontsize=12)
-                            option_img = Image(option_img_buf, width=5*inch, height=0.6*inch)
-                            story.append(option_img)
-                        else:
-                            story.append(Paragraph("Option text missing", styles['Normal']))
-                            print(f"    ⚠️ Option {labels[j]} text missing")
-                        
-                        story.append(Spacer(1, 8))
-                    except Exception as e:
-                        print(f"    ❌ Error rendering option {labels[j]}: {e}")
-                        story.append(Paragraph(f"{labels[j]}) Error rendering option: {option}", option_style))
-                        story.append(Spacer(1, 8))
 
-            # Answer (optional - you can remove this if you don't want answers in the PDF)
+            for j, option in enumerate(options[:4]):
+                if j < len(labels):
+                    story.append(Paragraph(f"{labels[j]})", option_style))
+                    if option:
+                        try:
+                            print(f"    Rendering option {labels[j]}: {option}")
+                            option_img_buf = latex_to_png(option, dpi=300, fontsize=12)
+                            w, h = get_image_dimensions(option_img_buf, width_limit=5*inch)
+                            option_img = Image(option_img_buf, width=w, height=h)
+                            story.append(option_img)
+                        except Exception as e:
+                            print(f"    ❌ Error rendering option {labels[j]}: {e}")
+                            story.append(Paragraph(f"{labels[j]}) Error rendering option", option_style))
+                    else:
+                        story.append(Paragraph("Option text missing", styles['Normal']))
+                    story.append(Spacer(1, 8))
+
             answer = mcq.get('answer', '')
             if answer:
-                answer_style = ParagraphStyle(
-                    'AnswerStyle',
-                    parent=styles['Normal'],
-                    fontSize=10,
-                    textColor=colors.darkgreen,
-                    fontName='Helvetica-Bold'
-                )
                 story.append(Paragraph(f"Answer: {answer}", answer_style))
-            
+
             story.append(Spacer(1, 25))
-            
-            # Add page break every 3 questions for better formatting
+
             if i % 3 == 0 and i < len(mcqs):
                 story.append(PageBreak())
 
-        # Build PDF
         print("🔨 Building PDF...")
         doc.build(story)
         print("✅ PDF generated successfully!")
         return True
-        
+
     except Exception as e:
         print(f"❌ Error generating PDF: {e}")
         import traceback
