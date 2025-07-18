@@ -22,6 +22,10 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import io
 import numpy as np
 
+# Initialize the session state variable if it doesn't exist
+if 'mcqs_generated' not in st.session_state:
+    st.session_state.mcqs_generated = False  # or whatever default value you need
+
 def clean_latex(latex_str):
     """Clean and prepare LaTeX string for rendering"""
     if not latex_str:
