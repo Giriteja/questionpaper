@@ -6,6 +6,7 @@ import pytz
 from pytz import timezone
 from anthropic import Anthropic
 import pdfplumber
+import os
 
 # Streamlit page configuration
 st.set_page_config(page_title="Document Q&A with LaTeX", layout="wide", initial_sidebar_state="auto")
