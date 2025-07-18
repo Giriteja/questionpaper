@@ -105,9 +105,12 @@ def clean_latex(latex_str):
     elif latex_str.startswith('$') and latex_str.endswith('$'):
         latex_str = latex_str[1:-1]
     
-    # Clean up common LaTeX issues
+    # Clean up common LaTeX issues for better rendering
     latex_str = latex_str.replace('\\text{', '\\mathrm{')
     latex_str = latex_str.replace('\\displaystyle', '')
+    latex_str = latex_str.replace('\\,', ' ')
+    latex_str = latex_str.replace('\\;', ' ')
+    latex_str = latex_str.replace('\\!', '')
     
     return latex_str.strip()
 
@@ -119,35 +122,47 @@ def latex_to_png(latex_str, dpi=300, fontsize=14):
         if not latex_str:
             return create_text_image("", fontsize)
         
-        # Set up matplotlib for LaTeX rendering
-        plt.rcParams['text.usetex'] = False  # Use mathtext instead of full LaTeX
+        # Set up matplotlib for proper LaTeX rendering
+        plt.rcParams['text.usetex'] = False  # Use mathtext for better compatibility
         plt.rcParams['font.family'] = 'serif'
         plt.rcParams['mathtext.fontset'] = 'cm'
+        plt.rcParams['font.size'] = fontsize
         
-        fig, ax = plt.subplots(figsize=(12, 2))
+        # Create figure with appropriate size
+        fig, ax = plt.subplots(figsize=(10, 2))
         ax.axis('off')
         
-        # Try to render as math text
+        # Try to render as math text with better error handling
         try:
-            ax.text(0.5, 0.5, f'${latex_str}$', 
+            # Check if the string contains math symbols
+            if any(symbol in latex_str for symbol in ['\\frac', '\\sqrt', '\\sum', '\\int', '^', '_', '\\theta', '\\pi', '\\alpha', '\\beta', '\\gamma']):
+                # Render as math
+                ax.text(0.05, 0.5, f'${latex_str}$', 
+                       fontsize=fontsize, 
+                       ha='left', 
+                       va='center',
+                       transform=ax.transAxes)
+            else:
+                # Render as regular text
+                ax.text(0.05, 0.5, latex_str, 
+                       fontsize=fontsize, 
+                       ha='left', 
+                       va='center',
+                       transform=ax.transAxes)
+        except Exception as e:
+            print(f"Math rendering failed for '{latex_str}': {e}")
+            # Fallback to plain text
+            ax.text(0.05, 0.5, latex_str, 
                    fontsize=fontsize, 
-                   ha='center', 
+                   ha='left', 
                    va='center',
-                   transform=ax.transAxes,
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-        except Exception:
-            # If math rendering fails, try as regular text
-            ax.text(0.5, 0.5, latex_str, 
-                   fontsize=fontsize, 
-                   ha='center', 
-                   va='center',
-                   transform=ax.transAxes,
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+                   transform=ax.transAxes)
         
-        # Save to BytesIO
+        # Save to BytesIO with better settings
         img_buf = io.BytesIO()
         plt.savefig(img_buf, format='png', dpi=dpi, bbox_inches='tight', 
-                   facecolor='white', edgecolor='none', transparent=False)
+                   facecolor='white', edgecolor='none', transparent=False,
+                   pad_inches=0.1)
         plt.close(fig)
         
         img_buf.seek(0)
@@ -156,6 +171,46 @@ def latex_to_png(latex_str, dpi=300, fontsize=14):
     except Exception as e:
         print(f"Error rendering LaTeX '{latex_str}': {e}")
         return create_text_image(latex_str, fontsize)
+
+def render_latex_text(text, fontsize=12):
+    """Render mixed text and LaTeX expressions"""
+    try:
+        # Set up matplotlib
+        plt.rcParams['text.usetex'] = False
+        plt.rcParams['font.family'] = 'serif'
+        plt.rcParams['mathtext.fontset'] = 'cm'
+        
+        fig, ax = plt.subplots(figsize=(10, 1.5))
+        ax.axis('off')
+        
+        # Split text by $ delimiters and process each part
+        parts = text.split('$')
+        rendered_text = ""
+        
+        for i, part in enumerate(parts):
+            if i % 2 == 0:  # Regular text
+                rendered_text += part
+            else:  # LaTeX part
+                rendered_text += f"${part}$"
+        
+        ax.text(0.05, 0.5, rendered_text, 
+               fontsize=fontsize, 
+               ha='left', 
+               va='center',
+               transform=ax.transAxes,
+               wrap=True)
+        
+        img_buf = io.BytesIO()
+        plt.savefig(img_buf, format='png', dpi=300, bbox_inches='tight', 
+                   facecolor='white', edgecolor='none', pad_inches=0.1)
+        plt.close(fig)
+        
+        img_buf.seek(0)
+        return img_buf
+        
+    except Exception as e:
+        print(f"Error rendering text '{text}': {e}")
+        return create_text_image(text, fontsize)
 
 def create_text_image(text, fontsize=14):
     """Create a simple text image as fallback"""
@@ -232,15 +287,19 @@ def generate_pdf(mcqs, output_path, exam_type="", difficulty=""):
             question_latex = mcq.get('question', '').strip()
             print(f"  Rendering question LaTeX: {question_latex}")
 
-            if question_latex:
+            question_text = mcq.get('question', '').strip()
+            print(f"  Rendering question: {question_text}")
+
+            if question_text:
                 try:
-                    question_img_buf = latex_to_png(question_latex, dpi=300, fontsize=14)
+                    # Use the new render function for mixed text/LaTeX
+                    question_img_buf = render_latex_text(question_text, fontsize=14)
                     w, h = get_image_dimensions(question_img_buf, width_limit=6*inch)
                     question_img = Image(question_img_buf, width=w, height=h)
                     story.append(question_img)
                 except Exception as e:
                     print(f"  ❌ Error rendering question: {e}")
-                    story.append(Paragraph(f"Error rendering question: {question_latex}", styles['Normal']))
+                    story.append(Paragraph(f"Question: {question_text}", styles['Normal']))
             else:
                 story.append(Paragraph("Question text missing", styles['Normal']))
 
@@ -256,13 +315,13 @@ def generate_pdf(mcqs, output_path, exam_type="", difficulty=""):
                     if option:
                         try:
                             print(f"    Rendering option {labels[j]}: {option}")
-                            option_img_buf = latex_to_png(option, dpi=300, fontsize=12)
+                            option_img_buf = render_latex_text(f"{labels[j]}) {option}", fontsize=12)
                             w, h = get_image_dimensions(option_img_buf, width_limit=5*inch)
                             option_img = Image(option_img_buf, width=w, height=h)
                             story.append(option_img)
                         except Exception as e:
                             print(f"    ❌ Error rendering option {labels[j]}: {e}")
-                            story.append(Paragraph(f"{labels[j]}) Error rendering option", option_style))
+                            story.append(Paragraph(f"{labels[j]}) {option}", option_style))
                     else:
                         story.append(Paragraph("Option text missing", styles['Normal']))
                     story.append(Spacer(1, 8))
