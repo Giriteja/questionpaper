@@ -525,7 +525,7 @@ if st.session_state.mcqs_generated:
     st.subheader("Preview Generated MCQs")
     if st.session_state.mcqs_data:
         # Show first 2 MCQs as preview
-        for i, mcq in enumerate(st.session_state.mcqs_data[:2], 1):
+        for i, mcq in enumerate(st.session_state.mcqs_data, 1):
             with st.expander(f"Preview Question {i}"):
                 st.write("**Question:**", mcq.get('question', 'N/A'))
                 st.write("**Options:**")
