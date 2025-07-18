@@ -404,8 +404,8 @@ if uploaded_file:
             )
             
             data = {
-                "model": "claude-3-5-sonnet-20241022",
-                "max_tokens": 2048,
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 30000,
                 "messages": [
                     {"role": "user", "content": [
                         {"type": "text", "text": prompt},
