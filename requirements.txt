@@ -4,3 +4,4 @@ python-dotenv
 pymupdf
 fitz
 reportlab
+matplotlib
