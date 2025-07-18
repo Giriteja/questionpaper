@@ -254,33 +254,24 @@ if uploaded_file:
     st.subheader("Generated MCQs")
 
     if st.button("Generate PDF"):
-    try:
-        pdf_path = "mcqs.pdf"
-        with open(final_mcqs_path, 'r') as f:
-            mcqs = json.load(f)
-        
-        generate_pdf(mcqs, pdf_path)
-        
-        # Create download button for PDF
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-            st.download_button(
-                label="Download MCQs PDF",
-                data=pdf_bytes,
-                file_name="mcqs.pdf",
-                mime="application/pdf"
-            )
-        st.success("PDF generated successfully!")
-    except Exception as e:
-        st.error(f"Error generating PDF: {e}")
-
-    # Download button for final_mcqs.json
-    with open(final_mcqs_path, "r", encoding="utf-8") as f:
-        st.download_button(
-            label="Download Final MCQs JSON",
-            data=f.read(),
-            file_name="final_mcqs.json",
-            mime="application/json"
-        )
+        try:
+            pdf_path = "mcqs.pdf"
+            with open(final_mcqs_path, 'r') as f:
+                mcqs = json.load(f)
+            
+            generate_pdf(mcqs, pdf_path)
+            
+            # Create download button for PDF
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+                st.download_button(
+                    label="Download MCQs PDF",
+                    data=pdf_bytes,
+                    file_name="mcqs.pdf",
+                    mime="application/pdf"
+                )
+            st.success("PDF generated successfully!")
+        except Exception as e:
+            st.error(f"Error generating PDF: {e}")
 
 
