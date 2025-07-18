@@ -6,3 +6,4 @@ fitz
 reportlab
 matplotlib
 anthropic
+pdfplumber
