@@ -104,6 +104,8 @@ def create_text_image(text, fontsize=14):
 def generate_pdf(mcqs, output_path):
     """Generate PDF with properly rendered mathematical expressions"""
     try:
+        print(f"🚀 Starting PDF generation with {len(mcqs)} MCQs")
+        
         doc = SimpleDocTemplate(output_path, pagesize=letter, 
                                topMargin=1*inch, bottomMargin=1*inch,
                                leftMargin=1*inch, rightMargin=1*inch)
@@ -142,19 +144,26 @@ def generate_pdf(mcqs, output_path):
         story.append(Spacer(1, 20))
 
         for i, mcq in enumerate(mcqs, 1):
+            print(f"📝 Processing question {i}/{len(mcqs)}")
+            
             # Question number
             story.append(Paragraph(f"Question {i}:", question_number_style))
             
             # Question with LaTeX rendering
             try:
                 question_latex = mcq.get('question', '')
+                print(f"  Question LaTeX: {question_latex[:50]}...")
+                
                 if question_latex:
                     question_img_buf = latex_to_png(question_latex, dpi=300, fontsize=14)
                     question_img = Image(question_img_buf, width=6*inch, height=0.8*inch)
                     story.append(question_img)
                 else:
                     story.append(Paragraph("Question text missing", styles['Normal']))
+                    print("  ⚠️ Question text missing")
+                    
             except Exception as e:
+                print(f"  ❌ Error rendering question: {e}")
                 story.append(Paragraph(f"Error rendering question: {question_latex}", styles['Normal']))
             
             story.append(Spacer(1, 15))
@@ -162,6 +171,7 @@ def generate_pdf(mcqs, output_path):
             # Options
             options = mcq.get('options', [])
             labels = ['A', 'B', 'C', 'D']
+            print(f"  Processing {len(options)} options")
             
             for j, option in enumerate(options[:4]):  # Ensure max 4 options
                 if j < len(labels):
@@ -171,14 +181,17 @@ def generate_pdf(mcqs, output_path):
                         
                         # Option with LaTeX rendering
                         if option:
+                            print(f"    Option {labels[j]}: {option[:30]}...")
                             option_img_buf = latex_to_png(option, dpi=300, fontsize=12)
                             option_img = Image(option_img_buf, width=5*inch, height=0.6*inch)
                             story.append(option_img)
                         else:
                             story.append(Paragraph("Option text missing", styles['Normal']))
+                            print(f"    ⚠️ Option {labels[j]} text missing")
                         
                         story.append(Spacer(1, 8))
                     except Exception as e:
+                        print(f"    ❌ Error rendering option {labels[j]}: {e}")
                         story.append(Paragraph(f"{labels[j]}) Error rendering option: {option}", option_style))
                         story.append(Spacer(1, 8))
 
@@ -201,11 +214,15 @@ def generate_pdf(mcqs, output_path):
                 story.append(PageBreak())
 
         # Build PDF
+        print("🔨 Building PDF...")
         doc.build(story)
+        print("✅ PDF generated successfully!")
         return True
         
     except Exception as e:
-        print(f"Error generating PDF: {e}")
+        print(f"❌ Error generating PDF: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 # Utility: extract and clean MCQs from Claude's output
@@ -321,6 +338,11 @@ if uploaded_file:
                 unique.append(mcq)
         return unique
 
+    # Initialize session state for MCQs
+    if 'mcqs_generated' not in st.session_state:
+        st.session_state.mcqs_generated = False
+        st.session_state.mcqs_data = []
+
     # Generate MCQs button
     if st.button("Generate MCQs"):
         # Progress bar and info placeholder
@@ -347,7 +369,7 @@ if uploaded_file:
                 f"Extract {batch_size} unique MCQ questions from these images. "
                 f"Return the result as a JSON array of {batch_size} objects. "
                 "Each object must have exactly these keys: 'question', 'options', and 'answer'. "
-                "'question' and each element of 'options' must be valid LaTeX strings for mathematical expressions, wrapped in double dollar signs ($$ ... $$). "
+                "'question' and each element of 'options' must be valid LaTeX strings for mathematical expressions, wrapped in double dollar signs ($ ... $). "
                 "'answer' is the correct option as a string (A, B, C, or D). "
                 "Ensure all mathematical symbols, fractions, integrals, derivatives, etc. are properly formatted in LaTeX. "
                 "Do not include any explanations. Output only the JSON array. "
@@ -406,67 +428,100 @@ if uploaded_file:
         final_mcqs = all_mcqs[:total_mcqs]
         with open(final_mcqs_path, "w", encoding="utf-8") as f:
             json.dump(final_mcqs, f, ensure_ascii=False, indent=2)
+            
+        # Update session state
+        st.session_state.mcqs_generated = True
+        st.session_state.mcqs_data = final_mcqs
 
         st.success(f"Generated {len(final_mcqs)} MCQs successfully!")
+        st.rerun()  # Refresh the page to show the new buttons
 
-    # Check if MCQs exist and show download options
-    if os.path.exists(final_mcqs_path):
-        st.subheader("Download Options")
-        
-        # Generate and download PDF
-        if st.button("Generate PDF with Rendered Math"):
-            try:
-                pdf_path = "mcqs_with_math.pdf"
-                with open(final_mcqs_path, 'r', encoding='utf-8') as f:
-                    mcqs = json.load(f)
-                
-                with st.spinner("Generating PDF with mathematical rendering..."):
-                    success = generate_pdf(mcqs, pdf_path)
-                
-                if success and os.path.exists(pdf_path):
-                    # Create download button for PDF
-                    with open(pdf_path, "rb") as f:
-                        pdf_bytes = f.read()
-                        st.download_button(
-                            label="📄 Download MCQs PDF",
-                            data=pdf_bytes,
-                            file_name="jee_mcqs_with_math.pdf",
-                            mime="application/pdf"
-                        )
-                    st.success("PDF generated successfully with rendered mathematical expressions!")
-                else:
-                    st.error("Error generating PDF. Please check the console for details.")
-                    
-            except Exception as e:
-                st.error(f"Error generating PDF: {e}")
-
-        # Download button for JSON
-        try:
-            with open(final_mcqs_path, "r", encoding="utf-8") as f:
-                json_data = f.read()
-                st.download_button(
-                    label="📋 Download MCQs JSON",
-                    data=json_data,
-                    file_name="jee_mcqs.json",
-                    mime="application/json"
-                )
-        except Exception as e:
-            st.error(f"Error reading JSON file: {e}")
-
-        # Preview some MCQs
-        st.subheader("Preview Generated MCQs")
+# Check if MCQs exist (either in session state or file) and show download options
+if st.session_state.mcqs_generated or os.path.exists(final_mcqs_path):
+    st.subheader("Download Options")
+    
+    # Load MCQs if not in session state
+    if not st.session_state.mcqs_generated and os.path.exists(final_mcqs_path):
         try:
             with open(final_mcqs_path, 'r', encoding='utf-8') as f:
-                mcqs = json.load(f)
-            
-            if mcqs:
-                # Show first 2 MCQs as preview
-                for i, mcq in enumerate(mcqs[:2], 1):
-                    with st.expander(f"Preview Question {i}"):
-                        st.write("**Question:**", mcq.get('question', 'N/A'))
-                        st.write("**Options:**")
-                        for j, option in enumerate(mcq.get('options', []), 1):
-                            st.write(f"  {chr(64+j)}) {option}")
-                        st.write("**Answer:**", mcq.get('answer', 'N/A'))
+                st.session_state.mcqs_data = json.load(f)
+                st.session_state.mcqs_generated = True
         except Exception as e:
-            st.error(f"Error previewing MCQs: {e}")
+            st.error(f"Error loading MCQs: {e}")
+    
+    # Show current status
+    if st.session_state.mcqs_data:
+        st.info(f"📊 {len(st.session_state.mcqs_data)} MCQs ready for download")
+    
+    # Generate and download PDF
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔄 Generate PDF with Rendered Math", help="Click to generate PDF with mathematical symbols"):
+            if not st.session_state.mcqs_data:
+                st.error("No MCQs found. Please generate MCQs first.")
+            else:
+                try:
+                    pdf_path = "mcqs_with_math.pdf"
+                    
+                    # Show debug info
+                    st.info(f"📝 Processing {len(st.session_state.mcqs_data)} MCQs...")
+                    
+                    # Debug: Show first MCQ
+                    if st.session_state.mcqs_data:
+                        with st.expander("🔍 Debug - First MCQ"):
+                            st.json(st.session_state.mcqs_data[0])
+                    
+                    with st.spinner("Generating PDF with mathematical rendering..."):
+                        success = generate_pdf(st.session_state.mcqs_data, pdf_path)
+                    
+                    if success and os.path.exists(pdf_path):
+                        st.success("✅ PDF generated successfully!")
+                        
+                        # Show file size
+                        file_size = os.path.getsize(pdf_path)
+                        st.info(f"📄 PDF size: {file_size / 1024:.1f} KB")
+                        
+                        # Create download button for PDF
+                        with open(pdf_path, "rb") as f:
+                            pdf_bytes = f.read()
+                            st.download_button(
+                                label="📄 Download MCQs PDF",
+                                data=pdf_bytes,
+                                file_name="jee_mcqs_with_math.pdf",
+                                mime="application/pdf",
+                                key="download_pdf"
+                            )
+                    else:
+                        st.error("❌ Error generating PDF. Check the logs above.")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error generating PDF: {str(e)}")
+                    st.exception(e)  # Show full traceback for debugging
+
+    with col2:
+        # Download button for JSON
+        if st.session_state.mcqs_data:
+            json_data = json.dumps(st.session_state.mcqs_data, ensure_ascii=False, indent=2)
+            st.download_button(
+                label="📋 Download MCQs JSON",
+                data=json_data,
+                file_name="jee_mcqs.json",
+                mime="application/json",
+                key="download_json"
+            )
+
+    # Preview some MCQs
+    st.subheader("Preview Generated MCQs")
+    if st.session_state.mcqs_data:
+        # Show first 2 MCQs as preview
+        for i, mcq in enumerate(st.session_state.mcqs_data[:2], 1):
+            with st.expander(f"Preview Question {i}"):
+                st.write("**Question:**", mcq.get('question', 'N/A'))
+                st.write("**Options:**")
+                options = mcq.get('options', [])
+                for j, option in enumerate(options):
+                    st.write(f"  {chr(65+j)}) {option}")
+                st.write("**Answer:**", mcq.get('answer', 'N/A'))
+    else:
+        st.info("No MCQs to preview. Generate MCQs first.")
